@@ -1497,9 +1497,14 @@ pub fn serve<'a>(
             Ok(Some(CompressType::Brotli(SwaggerFile {
                 // safety: `file.data_br()` is guaranteed to return `Some` if br compression is enabled
                 bytes: file.data_br().unwrap(),
-                content_type: mime_guess::from_path(file_path)
-                    .first_or_octet_stream()
-                    .to_string(),
+                content_type: file
+                    .mime_type()
+                    .map(|mime| mime.to_string())
+                    .unwrap_or_else(|| {
+                        mime_guess::from_path(file_path)
+                            .first_or_octet_stream()
+                            .to_string()
+                    }),
                 last_modified: file.last_modified(),
                 etag: file.etag(),
             })))

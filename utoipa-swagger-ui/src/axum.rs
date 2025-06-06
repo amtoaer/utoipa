@@ -140,7 +140,7 @@ async fn serve_swagger_ui(
             .map(|file| {
                 let mut resp = Response::builder().status(StatusCode::OK);
                 let resp = match file {
-                    CompressType::Uncompressed(content) => {
+                    CompressType::Brotli(content) => {
                         resp = resp
                             .header(header::CONTENT_ENCODING, "br")
                             .header(
@@ -156,7 +156,7 @@ async fn serve_swagger_ui(
                         }
                         resp.body(Body::from(content.bytes))
                     }
-                    CompressType::Brotli(content) => resp.body(Body::from(content.bytes)),
+                    CompressType::Uncompressed(content) => resp.body(Body::from(content.bytes)),
                 };
                 // safety: `RustEmbed` will always generate br-compressed files if the feature is enabled
                 resp.unwrap_or_else(|_| {
