@@ -5,14 +5,14 @@ use std::sync::Arc;
 use axum::{
     body::Body,
     extract::Path,
-    http::{HeaderMap, Request, Response, StatusCode},
+    http::{header, HeaderMap, Request, Response, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
     routing, Extension, Json, Router,
 };
 use base64::{prelude::BASE64_STANDARD, Engine};
 
-use crate::{ApiDoc, BasicAuth, Config, SwaggerUi, Url};
+use crate::{ApiDoc, BasicAuth, CompressType, Config, SwaggerUi, Url};
 
 impl<S> From<SwaggerUi> for Router<S>
 where
@@ -135,16 +135,37 @@ async fn serve_swagger_ui(
         Some(tail) => tail,
         None => "",
     };
-
     match super::serve(tail, state) {
         Ok(file) => file
             .map(|file| {
-                (
-                    StatusCode::OK,
-                    [("Content-Type", file.content_type)],
-                    file.bytes,
-                )
-                    .into_response()
+                let mut resp = Response::builder().status(StatusCode::OK);
+                let resp = match file {
+                    CompressType::Uncompressed(content) => {
+                        resp = resp
+                            .header(header::CONTENT_ENCODING, "br")
+                            .header(
+                                header::CACHE_CONTROL,
+                                "max-age=604800, stale-while-revalidate=86400",
+                            )
+                            .header(header::VARY, "Accept-Encoding");
+                        if let Some(last_modified) = content.last_modified {
+                            resp = resp.header(header::LAST_MODIFIED, last_modified.as_ref());
+                        }
+                        if !content.etag.is_empty() {
+                            resp = resp.header(header::ETAG, content.etag.as_ref());
+                        }
+                        resp.body(Body::from(content.bytes))
+                    }
+                    CompressType::Brotli(content) => resp.body(Body::from(content.bytes)),
+                };
+                // safety: `RustEmbed` will always generate br-compressed files if the feature is enabled
+                resp.unwrap_or_else(|_| {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "500 Internal Server Error",
+                    )
+                        .into_response();
+                })
             })
             .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response()),
         Err(error) => (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response(),

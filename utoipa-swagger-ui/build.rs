@@ -252,6 +252,9 @@ fn write_embed_code(target_dir: &str, zip_top_level_folder: &str) {
 // This file is auto-generated during compilation, do not modify
 #[derive(RustEmbed)]
 #[folder = r"{}/{}/dist/"]
+#[gzip = false]
+#[preserve_source = false]
+#[preserve_source_except = "swagger-initializer.js"]
 struct SwaggerUiDist;
 "#,
         target_dir, zip_top_level_folder
