@@ -25,8 +25,6 @@
 //!   and api doc without a hassle.
 //! * **`axum`** Enables `axum` integration with pre-configured Router serving Swagger UI and OpenAPI specs
 //!   hassle free.
-//! * **`debug-embed`** Enables `debug-embed` feature on `rust_embed` crate to allow embedding files in debug
-//!   builds as well.
 //! * **`reqwest`** Use `reqwest` for downloading Swagger UI according to the `SWAGGER_UI_DOWNLOAD_URL` environment
 //!   variable. This is only enabled by default on _Windows_.
 //! * **`url`** Enabled by default for parsing and encoding the download URL.
@@ -143,12 +141,10 @@
 //! ```
 use std::{borrow::Cow, error::Error, mem, sync::Arc};
 
-mod actix;
 mod axum;
 pub mod oauth;
-mod rocket;
 
-use rust_embed::RustEmbed;
+use rust_embed_for_web::{EmbedableFile, RustEmbed};
 use serde::Serialize;
 #[cfg(any(feature = "actix-web", feature = "rocket", feature = "axum"))]
 use utoipa::openapi::OpenApi;
@@ -1409,6 +1405,8 @@ pub struct SwaggerFile<'a> {
     pub bytes: Cow<'a, [u8]>,
     /// Content type of the file e.g `"text/xml"`.
     pub content_type: String,
+    pub last_modified: Option<Cow<'static, str>>,
+    pub etag: Cow<'static, str>,
 }
 
 /// User friendly way to serve Swagger UI and its content via web server.
@@ -1458,7 +1456,7 @@ pub struct SwaggerFile<'a> {
 pub fn serve<'a>(
     path: &str,
     config: Arc<Config<'a>>,
-) -> Result<Option<SwaggerFile<'a>>, Box<dyn Error>> {
+) -> Result<Option<CompressType<'a>>, Box<dyn Error>> {
     let mut file_path = path;
 
     if file_path.is_empty() || file_path == "/" {
@@ -1466,35 +1464,59 @@ pub fn serve<'a>(
     }
 
     if let Some(file) = SwaggerUiDist::get(file_path) {
-        let mut bytes = file.data;
-
         if file_path == "swagger-initializer.js" {
-            let mut file = match String::from_utf8(bytes.to_vec()) {
-                Ok(file) => file,
+            // safety: `swagger-initializer.js` is preserved by set preserve_source_expect in `rust-embed-for-web`
+            let mut content = match String::from_utf8(file.data().unwrap().to_vec()) {
+                Ok(content) => content,
                 Err(error) => return Err(Box::new(error)),
             };
 
-            file = format_config(config.as_ref(), file)?;
+            content = format_config(config.as_ref(), content)?;
 
             if let Some(oauth) = &config.oauth {
-                match oauth::format_swagger_config(oauth, file) {
-                    Ok(oauth_file) => file = oauth_file,
+                match oauth::format_swagger_config(oauth, content) {
+                    Ok(oauth_content) => content = oauth_content,
                     Err(error) => return Err(Box::new(error)),
                 }
             }
 
-            bytes = Cow::Owned(file.as_bytes().to_vec())
-        };
-
-        Ok(Some(SwaggerFile {
-            bytes,
-            content_type: mime_guess::from_path(file_path)
-                .first_or_octet_stream()
-                .to_string(),
-        }))
+            Ok(Some(CompressType::Uncompressed(SwaggerFile {
+                bytes: Cow::Owned(content.as_bytes().to_vec()),
+                content_type: file
+                    .mime_type()
+                    .map(|mime| mime.to_string())
+                    .unwrap_or_else(|| {
+                        mime_guess::from_path(file_path)
+                            .first_or_octet_stream()
+                            .to_string()
+                    }),
+                last_modified: file.last_modified(),
+                etag: file.etag(),
+            })))
+        } else {
+            Ok(Some(CompressType::Brotli(SwaggerFile {
+                // safety: `file.data_br()` is guaranteed to return `Some` if br compression is enabled
+                bytes: file.data_br().unwrap(),
+                content_type: file
+                    .mime_type()
+                    .map(|mime| mime.to_string())
+                    .unwrap_or_else(|| {
+                        mime_guess::from_path(file_path)
+                            .first_or_octet_stream()
+                            .to_string()
+                    }),
+                last_modified: file.last_modified(),
+                etag: file.etag(),
+            })))
+        }
     } else {
         Ok(None)
     }
+}
+
+pub enum CompressType<'a> {
+    Brotli(SwaggerFile<'a>),
+    Uncompressed(SwaggerFile<'a>),
 }
 
 #[inline]
