@@ -1495,7 +1495,7 @@ pub fn serve<'a>(
             })))
         } else {
             Ok(Some(CompressType::Brotli(SwaggerFile {
-                // safety: `file.data_br()` is guaranteed to return `Some` if br compression is enabled
+                // safety: `RustEmbed` will always generate br-compressed files if the feature is enabled
                 bytes: file.data_br().unwrap(),
                 content_type: file
                     .mime_type()

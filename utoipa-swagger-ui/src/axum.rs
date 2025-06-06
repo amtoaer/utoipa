@@ -138,30 +138,18 @@ async fn serve_swagger_ui(
     match super::serve(tail, state) {
         Ok(file) => file
             .map(|file| {
-                let mut resp = Response::builder().status(StatusCode::OK);
+                let is_brotli = matches!(file, CompressType::Brotli(_));
                 let resp = match file {
-                    CompressType::Brotli(content) => {
-                        resp = resp
-                            .header(header::CONTENT_TYPE, content.content_type)
-                            .header(header::CONTENT_ENCODING, "br")
-                            .header(
-                                header::CACHE_CONTROL,
-                                "max-age=604800, stale-while-revalidate=86400",
-                            )
-                            .header(header::VARY, "Accept-Encoding");
-                        if let Some(last_modified) = content.last_modified {
-                            resp = resp.header(header::LAST_MODIFIED, last_modified.as_ref());
-                        }
-                        if !content.etag.is_empty() {
-                            resp = resp.header(header::ETAG, content.etag.as_ref());
+                    CompressType::Brotli(content) | CompressType::Uncompressed(content) => {
+                        let mut resp = Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, content.content_type);
+                        if is_brotli {
+                            resp = resp.header(header::CONTENT_ENCODING, "br");
                         }
                         resp.body(Body::from(content.bytes))
                     }
-                    CompressType::Uncompressed(content) => resp
-                        .header(header::CONTENT_TYPE, content.content_type)
-                        .body(Body::from(content.bytes)),
                 };
-                // safety: `RustEmbed` will always generate br-compressed files if the feature is enabled
                 resp.unwrap_or_else(|_| {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
